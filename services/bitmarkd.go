@@ -6,10 +6,17 @@ package services
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +24,7 @@ import (
 	"github.com/bitmark-inc/bitmark-node/config"
 	"github.com/bitmark-inc/bitmark-node/fault"
 	"github.com/bitmark-inc/bitmark-node/utils"
+	"github.com/bitmark-inc/bitmarkd/account"
 	"github.com/bitmark-inc/logger"
 )
 
@@ -40,6 +48,15 @@ type Bitmarkd struct {
 	localIP     string
 }
 
+var client = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	},
+}
+
 func NewBitmarkd(localIP string) *Bitmarkd {
 	return &Bitmarkd{
 		localIP: localIP,
@@ -51,7 +68,7 @@ func (bitmarkd *Bitmarkd) GetPath() string {
 }
 
 func (bitmarkd *Bitmarkd) GetNetwork() string {
-	if (len(bitmarkd.network) == 0) {
+	if len(bitmarkd.network) == 0 {
 		return "bitmark"
 	}
 	return bitmarkd.network
@@ -75,6 +92,8 @@ func (bitmarkd *Bitmarkd) Initialise(rootPath string) error {
 
 	// all data initialised
 	bitmarkd.initialised = true
+
+	bitmarkd.initLoop()
 	return nil
 }
 
@@ -173,7 +192,7 @@ func (bitmarkd *Bitmarkd) Start() error {
 			if runCounter < 65535 {
 				runCounter++
 			}
-			
+
 			cmd := exec.Command("bitmarkd", "--config-file="+bitmarkd.configFile)
 			cmd.Env = []string{
 				fmt.Sprintf("CONTAINER_IP=%s", bitmarkd.localIP),
@@ -273,4 +292,73 @@ func (bitmarkd *Bitmarkd) Stop() error {
 	}
 	bitmarkd.started = false
 	return nil
+}
+
+func (bitmarkd *Bitmarkd) initLoop() {
+	go func() {
+		for true {
+			time.Sleep(15 * time.Second)
+			if bitmarkd.running {
+				// Request bitmarkd details
+				resp, err := client.Get("https://127.0.0.1:2131/bitmarkd/details")
+				if err != nil {
+					fmt.Println("unable to get bitmark info")
+					continue
+				}
+				defer resp.Body.Close()
+				bb := bytes.Buffer{}
+				io.Copy(&bb, resp.Body)
+
+				if resp.StatusCode != http.StatusOK {
+					fmt.Println("unable to get bitmark info. message: %s", bb.String())
+					continue
+				}
+
+				var reply DetailReply
+				d := json.NewDecoder(&bb)
+
+				if err := d.Decode(&reply); err != nil {
+					fmt.Println("fail to read bitmark info response. error: %s\n", err.Error())
+					continue
+				}
+
+				t, _ := time.ParseDuration(reply.Uptime)
+				reply.Uptime = t.Round(time.Second).String()
+				fmt.Println("Blocks: %s", reply.Blocks)
+
+				// Post info to server
+				seedFile := filepath.Join(bitmarkd.rootPath, bitmarkd.network, "proof.sign")
+				f, err := os.Open(seedFile)
+				if err != nil {
+					fmt.Println("fail to open seed file from: %s", seedFile)
+					continue
+				}
+				defer f.Close()
+
+				var buf bytes.Buffer
+				_, err = io.Copy(&buf, f)
+				if err != nil {
+					fmt.Println("can not read config file")
+					continue
+				}
+
+				seed := strings.Trim(strings.Split(buf.String(), ":")[1], "\n")
+				a, err := account.PrivateKeyFromBase58Seed(seed)
+				if err != nil {
+					fmt.Println("unable to get your account. error: %s", err.Error())
+					continue
+				}
+
+				data := url.Values{"id": {a.Account().String()}, "ip": {os.Getenv("PUBLIC_IP")}, "height": {strconv.FormatUint(reply.Blocks.Local, 10)}}
+				body := strings.NewReader(data.Encode())
+				dest := os.Getenv("SERVER_IP") + "api/update"
+				resp, err = http.Post(dest, "application/x-www-form-urlencoded", body)
+				if err != nil {
+					fmt.Println("unable to post docker info")
+					continue
+				}
+				defer resp.Body.Close()
+			}
+		}
+	}()
 }
