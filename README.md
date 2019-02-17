@@ -35,7 +35,7 @@ docker pull seanchuang/bitmark-node-map
 After entering the pull command, the download sequence should begin in the terminal. You will receive the following message after the download is completed successfully:
 
 ```
-Status: Downloaded newer image for bitmark/bitmark-node:latest
+Status: Downloaded newer image for seanchuang/bitmark-node-map:latest
 ```
 
 
@@ -44,14 +44,14 @@ Status: Downloaded newer image for bitmark/bitmark-node:latest
 After the Bitmark node software has successfully downloaded, copy and paste the following command into the command-line terminal to run the Bitmark node:
 
 ```
-docker run -d --name bitmarkNode -p 9980:9980 \
+docker run -d --name bitmark-node-map -p 9980:9980 \
 -p 2136:2136 -p 2130:2130 \
 -e PUBLIC_IP=[YOUR_PUBLIC_IP] \
 -e SERVER_IP=[SERVER_IP] \
 -v $HOME/bitmark-node-data/db:/.config/bitmark-node/db \
 -v $HOME/bitmark-node-data/data:/.config/bitmark-node/bitmarkd/bitmark/data \
 -v $HOME/bitmark-node-data/data-test:/.config/bitmark-node/bitmarkd/testing/data \
-bitmark/bitmark-node
+seanchuang/bitmark-node-map
 ```
 
 Please remember to replace `[YOUR_PUBLIC_IP]` and `[SERVER_IP]` to your node public ip and [nodemap_service](https://github.com/jseanchuang/nodemap-service) ip. The map_servie is a centralized service that records the node information. The bitmakrd will automatically uploads the information to nodemap_service when it is running.
